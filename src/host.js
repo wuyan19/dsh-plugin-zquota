@@ -31,6 +31,40 @@ const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i
 /** 插件自有状态文件：非机密的账号索引与额度快照。 */
 const STATE_PATH = join(env.DSH_HOME ?? join(homedir(), '.dsh'), 'zquota-state.json')
 
+/** 业务错误消息（client 每请求携带 lang；缺省 zh）。 */
+const MSG = {
+  zh: {
+    nameRequired: '请填写名称',
+    notFound: '账号不存在',
+    badKey: 'API Key 格式应为 id.secret',
+    dupKey: '该 API Key 已存在',
+    noKey: '未存储 API Key',
+    intlUnsupported: '国际版账号暂不支持切换（未配置国际版模型路由）',
+    writeFailed: '写入凭据失败：',
+    atEdge: '已在边界',
+    badResponse: '响应非 JSON（HTTP {status}）',
+  },
+  en: {
+    nameRequired: 'Name is required',
+    notFound: 'Account not found',
+    badKey: 'API key must look like id.secret',
+    dupKey: 'This API key already exists',
+    noKey: 'No API key stored',
+    intlUnsupported: 'Intl accounts cannot be activated yet (no intl model route configured)',
+    writeFailed: 'Failed to write credential: ',
+    atEdge: 'Already at the edge',
+    badResponse: 'Non-JSON response (HTTP {status})',
+  },
+}
+
+function msgs (args) {
+  return (args && args.lang === 'en') ? MSG.en : MSG.zh
+}
+
+function fill (template, params) {
+  return String(template).replace(/\{(\w+)\}/g, (m, name) => (params && params[name] !== undefined ? String(params[name]) : m))
+}
+
 function keyRef (keyId) { return 'ZAI_QUOTA_KEY_' + keyId }
 
 /** 由 API Key 确定性生成账号 id（FNV-1a 双向哈希 → 11 位大写十六进制）。 */
@@ -112,10 +146,10 @@ export function apply (ctx) {
   }
 
   // ── 配额查询：Node 原生 fetch 直连（不经 ctx.shell，沙箱后端不可用也不受影响） ──
-  async function refreshOne (a) {
+  async function refreshOne (a, m) {
     const keyId = a.keyId || a.id
     const key = await readKey(keyId)
-    if (key === '') { a.lastError = '未存储 API Key'; return }
+    if (key === '') { a.lastError = m.noKey; return }
     const base = ENDPOINTS[a.endpoint || 'cn']
     try {
       const res = await fetch(base + '/api/monitor/usage/quota/limit', {
@@ -123,7 +157,7 @@ export function apply (ctx) {
         signal: AbortSignal.timeout(20000),
       })
       let json
-      try { json = await res.json() } catch (e) { throw new Error('响应非 JSON（HTTP ' + res.status + '）') }
+      try { json = await res.json() } catch (e) { throw new Error(fill(m.badResponse, { status: res.status })) }
       if (!res.ok || !json.success) throw new Error(json.msg || json.error || 'HTTP ' + res.status)
       const limits = (json.data && json.data.limits) || []
       const tokens = limits.filter(l => l.type === 'TOKENS_LIMIT')
@@ -142,26 +176,28 @@ export function apply (ctx) {
 
   // ── 业务操作 ──
   async function opRefresh (args) {
+    const m = msgs(args)
     const list = await loadIndex()
     const targets = (args && args.id) ? list.filter(a => a.id === args.id) : list
-    await Promise.all(targets.map(refreshOne))
+    await Promise.all(targets.map(a => refreshOne(a, m)))
     await saveIndex(list)
     return snapshot()
   }
 
   async function opSave (args) {
+    const m = msgs(args)
     const name = String((args && args.name) || '').trim()
     const endpoint = (args && args.endpoint === 'intl') ? 'intl' : 'cn'
     const apiKey = String((args && args.apiKey) || '').trim()
-    if (!name) return { ok: false, error: '请填写名称' }
+    if (!name) return { ok: false, error: m.nameRequired }
     const list = await loadIndex()
     if (args && args.id) {
       const a = list.find(x => x.id === args.id)
-      if (!a) return { ok: false, error: '账号不存在' }
+      if (!a) return { ok: false, error: m.notFound }
       a.name = name
       a.endpoint = endpoint
       if (apiKey !== '') {
-        if (!apiKey.includes('.')) return { ok: false, error: 'API Key 格式应为 id.secret' }
+        if (!apiKey.includes('.')) return { ok: false, error: m.badKey }
         const nk = idFromKey(apiKey)
         const old = a.keyId || a.id
         if (nk !== old) {
@@ -171,9 +207,9 @@ export function apply (ctx) {
         }
       }
     } else {
-      if (!apiKey.includes('.')) return { ok: false, error: 'API Key 格式应为 id.secret' }
+      if (!apiKey.includes('.')) return { ok: false, error: m.badKey }
       const keyId = idFromKey(apiKey)
-      if (list.some(x => (x.keyId || x.id) === keyId)) return { ok: false, error: '该 API Key 已存在' }
+      if (list.some(x => (x.keyId || x.id) === keyId)) return { ok: false, error: m.dupKey }
       await ctx.credentials.set(keyRef(keyId), apiKey)
       list.push({ id: keyId, keyId, name, endpoint, createdAt: Date.now(), lastResult: null, lastUpdated: null, lastError: null })
     }
@@ -183,9 +219,10 @@ export function apply (ctx) {
   }
 
   async function opDelete (args) {
+    const m = msgs(args)
     const list = await loadIndex()
     const i = list.findIndex(x => x.id === (args && args.id))
-    if (i < 0) return { ok: false, error: '账号不存在' }
+    if (i < 0) return { ok: false, error: m.notFound }
     try { await ctx.credentials.unset(keyRef(list[i].keyId || list[i].id)) } catch (e) { /* absent */ }
     list.splice(i, 1)
     await saveIndex(list)
@@ -194,28 +231,31 @@ export function apply (ctx) {
 
   // 上移/下移（dir: -1 | 1）：顺序持久化到状态文件
   async function opMove (args) {
+    const m = msgs(args)
     const dir = (args && args.dir === 1) ? 1 : -1
     const list = await loadIndex()
     const i = list.findIndex(x => x.id === (args && args.id))
-    if (i < 0) return { ok: false, error: '账号不存在' }
+    if (i < 0) return { ok: false, error: m.notFound }
     const j = i + dir
-    if (j < 0 || j >= list.length) return { ok: false, error: '已在边界' }
+    if (j < 0 || j >= list.length) return { ok: false, error: m.atEdge }
     const moved = list.splice(i, 1)[0]
     list.splice(j, 0, moved)
     await saveIndex(list)
     return snapshot()
   }
 
-  async function opActivate (args) {    const list = await loadIndex()
+  async function opActivate (args) {
+    const m = msgs(args)
+    const list = await loadIndex()
     const a = list.find(x => x.id === (args && args.id))
-    if (!a) return { ok: false, error: '账号不存在' }
-    if ((a.endpoint || 'cn') !== 'cn') return { ok: false, error: '国际版账号暂不支持切换（未配置国际版模型路由）' }
+    if (!a) return { ok: false, error: m.notFound }
+    if ((a.endpoint || 'cn') !== 'cn') return { ok: false, error: m.intlUnsupported }
     const key = await readKey(a.keyId || a.id)
-    if (key === '') return { ok: false, error: '未存储 API Key' }
+    if (key === '') return { ok: false, error: m.noKey }
     try {
       await ctx.credentials.set(LIVE_REF, key)
     } catch (e) {
-      return { ok: false, error: '写入凭据失败：' + ((e && e.message) || String(e)) }
+      return { ok: false, error: m.writeFailed + ((e && e.message) || String(e)) }
     }
     return { ok: true }
   }
