@@ -177,7 +177,7 @@ export function apply (ctx) {
       await ctx.credentials.set(keyRef(keyId), apiKey)
       list.push({ id: keyId, keyId, name, endpoint, createdAt: Date.now(), lastResult: null, lastUpdated: null, lastError: null })
     }
-    list.sort((x, y) => (x.createdAt || 0) - (y.createdAt || 0))
+    // 不排序：列表顺序由用户通过「上移/下移」拥有，新账号追加在末尾
     await saveIndex(list)
     return { ok: true }
   }
@@ -192,8 +192,21 @@ export function apply (ctx) {
     return { ok: true }
   }
 
-  async function opActivate (args) {
+  // 上移/下移（dir: -1 | 1）：顺序持久化到状态文件
+  async function opMove (args) {
+    const dir = (args && args.dir === 1) ? 1 : -1
     const list = await loadIndex()
+    const i = list.findIndex(x => x.id === (args && args.id))
+    if (i < 0) return { ok: false, error: '账号不存在' }
+    const j = i + dir
+    if (j < 0 || j >= list.length) return { ok: false, error: '已在边界' }
+    const moved = list.splice(i, 1)[0]
+    list.splice(j, 0, moved)
+    await saveIndex(list)
+    return snapshot()
+  }
+
+  async function opActivate (args) {    const list = await loadIndex()
     const a = list.find(x => x.id === (args && args.id))
     if (!a) return { ok: false, error: '账号不存在' }
     if ((a.endpoint || 'cn') !== 'cn') return { ok: false, error: '国际版账号暂不支持切换（未配置国际版模型路由）' }
@@ -231,7 +244,7 @@ export function apply (ctx) {
     })
   }
 
-  const OPS = { state: snapshot, refresh: opRefresh, save: opSave, delete: opDelete, activate: opActivate }
+  const OPS = { state: snapshot, refresh: opRefresh, save: opSave, delete: opDelete, activate: opActivate, move: opMove }
 
   async function handle (req, res) {
     // 本地防线：自定义头（跨站简单请求无法携带）+ loopback Host（DNS rebinding）。

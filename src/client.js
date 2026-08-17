@@ -48,10 +48,12 @@ const CSS = [
   '.gq-cell-val{font-family:var(--ds-font-family-code);font-size:14px;font-weight:600;line-height:18px;color:var(--dsw-alias-label-primary)}',
   '.gq-unit{font-size:10px;font-weight:400;color:var(--dsw-alias-label-tertiary);margin-left:1px}',
   '.gq-track{height:3px;border-radius:2px;background:var(--dsw-alias-bg-layer-2);overflow:hidden}',
-  '.gq-fill{display:block;height:100%;border-radius:2px;background:var(--dsw-alias-brand-primary)}',
+  '.gq-fill{display:block;height:100%;border-radius:2px;background:var(--dsw-alias-state-success-primary)}',
   '.gq-warn .gq-fill{background:var(--dsw-alias-state-warn-primary)}',
   '.gq-crit .gq-fill{background:var(--dsw-alias-state-error-primary)}',
   '.gq-cell-sub{font-size:11px;line-height:14px;color:var(--dsw-alias-label-tertiary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default}',
+  '.gq-reset{display:inline-flex;align-items:center;gap:3px;min-width:0;vertical-align:-2px}',
+  '.gq-reset svg{width:11px;height:11px;flex:none;opacity:.75}',
   '.gq-err{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary);word-break:break-word}',
   '.gq-warnline{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-label)}',
   '.gq-foot{display:flex;align-items:center;gap:8px;min-height:14px}',
@@ -100,6 +102,13 @@ function timeAgo (ms) {
 const h = React.createElement
 const LEVELS = { lite: 'Lite', pro: 'Pro', max: 'Max' }
 
+// 内联小时钟图标（平台图标库无 clock 类图标；11px、跟随 currentColor）
+function ClockIcon () {
+  return h('svg', { viewBox: '0 0 12 12', fill: 'none', 'aria-hidden': 'true' },
+    h('circle', { cx: 6, cy: 6, r: 5, stroke: 'currentColor', 'stroke-width': 1.2 }),
+    h('path', { d: 'M6 3.4V6l1.9 1.2', stroke: 'currentColor', 'stroke-width': 1.2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }))
+}
+
 function MeterCell (label, item) {
   if (!item) {
     return h('div', { className: 'gq-cell', key: label },
@@ -115,15 +124,19 @@ function MeterCell (label, item) {
   if (Array.isArray(item.usageDetails) && item.usageDetails.length > 0) {
     title = '各工具用量：\n' + item.usageDetails.map(r => r.modelCode + '：' + r.usage).join('\n')
   }
-  const parts = []
-  if (hasUsage) parts.push(item.currentValue + ' / ' + item.usage)
-  if (item.nextResetTime) parts.push(fmtReset(item.nextResetTime) + '后重置')
+  const subChildren = []
+  if (hasUsage) subChildren.push(item.currentValue + ' / ' + item.usage)
+  if (item.nextResetTime) {
+    if (subChildren.length > 0) subChildren.push(' · ')
+    subChildren.push(h('span', { className: 'gq-reset', title: '重置于 ' + new Date(item.nextResetTime).toLocaleString() },
+      h(ClockIcon), fmtReset(item.nextResetTime)))
+  }
   const width = (pct == null) ? 0 : Math.max(0, Math.min(100, pct))
   return h('div', { className: 'gq-cell' + (cls ? ' ' + cls : ''), key: label, title: title || undefined },
     h('div', { className: 'gq-cell-lbl' }, label),
     h('div', { className: 'gq-cell-val' }, pct == null ? '—' : String(pct), h('span', { className: 'gq-unit' }, '%')),
     h('div', { className: 'gq-track' }, h('span', { className: 'gq-fill', style: { width: width + '%' } })),
-    h('div', { className: 'gq-cell-sub' }, parts.length > 0 ? parts.join(' · ') : '\u00a0'))
+    h('div', { className: 'gq-cell-sub' }, subChildren.length > 0 ? subChildren : '\u00a0'))
 }
 
 function GlmSection (props) {
@@ -210,6 +223,14 @@ function GlmSection (props) {
     if (r && r.ok) setData(r)
   }
 
+  async function moveAccount (a, dir) {
+    setErr(null)
+    setBusyIds(p => { const n = Object.assign({}, p); n[a.id] = true; return n })
+    const r = await call('move', { id: a.id, dir })
+    setBusyIds(p => { const n = Object.assign({}, p); delete n[a.id]; return n })
+    if (r && r.ok) setData(r)
+  }
+
   async function activate (a) {
     setErr(null)
     const r = await call('activate', { id: a.id })
@@ -255,7 +276,7 @@ function GlmSection (props) {
     await reload()
   }
 
-  function renderRow (a) {
+  function renderRow (a, idx, arr) {
     const r = a.lastResult
     const level = r && r.level ? String(r.level).toLowerCase() : ''
     const levelLabel = LEVELS[level] || level
@@ -268,6 +289,8 @@ function GlmSection (props) {
         levelLabel ? h('span', { className: 'gq-tag' }, levelLabel) : null,
         a.live ? h('span', { className: 'gq-live' }, '使用中') : null,
         h('span', { className: 'gq-cardactions' },
+          h('button', { className: 'gq-icon', disabled: busy || idx === 0, title: '上移', onClick: () => moveAccount(a, -1) }, '\u2191'),
+          h('button', { className: 'gq-icon', disabled: busy || idx === arr.length - 1, title: '下移', onClick: () => moveAccount(a, 1) }, '\u2193'),
           a.live ? null : h('button', {
             className: 'gq-btn gq-secondary gq-usebtn',
             disabled: busy,
