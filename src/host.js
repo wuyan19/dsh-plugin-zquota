@@ -2,8 +2,11 @@
  * dsh-plugin-zquota — host half (plain ESM, no build step).
  *
  * GLM Coding Plan 账号面板的宿主侧：
- * - 账号与 API Key 存于 $DSH_HOME/.credentials.yaml（经 ctx.credentials，
- *   条目 ZAI_QUOTA_ACCOUNTS 索引 + ZAI_QUOTA_KEY_<id> 每账号一条）
+ * - API Key（机密）存于 $DSH_HOME/.credentials.yaml（经 ctx.credentials，
+ *   条目 ZAI_QUOTA_KEY_<id> 每账号一条）——凭据库只放真机密
+ * - 账号索引、名称、额度快照（非机密状态）存于插件自有状态文件
+ *   $DSH_HOME/zquota-state.json（0600、temp+rename 原子写），
+ *   含一次性迁移：旧版曾把索引放进凭据文件（ZAI_QUOTA_ACCOUNTS）
  * - 配额查询经 ctx.shell 调 curl 直连智谱端点；API Key 只经环境变量注入，
  *   绝不进入命令行参数
  * - 「设为当前」= 写 ZAI_CODING_CN_API_KEY，llm-pi-ai 每请求重新解析凭据，
@@ -12,14 +15,22 @@
  *   （静态包没有动态插件的包私有 RPC 通道，同源 fetch 是等价替代）
  */
 
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
+import { env } from 'node:process'
+
 export const inject = ['credentials', 'shell', 'webServer']
 
 const ENDPOINTS = { cn: 'https://open.bigmodel.cn', intl: 'https://api.z.ai' }
 const LIVE_REF = 'ZAI_CODING_CN_API_KEY'
-const INDEX_REF = 'ZAI_QUOTA_ACCOUNTS'
+const LEGACY_INDEX_REF = 'ZAI_QUOTA_ACCOUNTS'
 const API_PREFIX = '/zquota-api'
 const CLIENT_HEADER = 'x-zquota-client'
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i
+
+/** 插件自有状态文件：非机密的账号索引与额度快照。 */
+const STATE_PATH = join(env.DSH_HOME ?? join(homedir(), '.dsh'), 'zquota-state.json')
 
 function keyRef (keyId) { return 'ZAI_QUOTA_KEY_' + keyId }
 
@@ -37,29 +48,57 @@ function idFromKey (key) {
 }
 
 export function apply (ctx) {
-  // ── curl 路径解析（sandbox env 替换可能丢失 PATH，优先绝对路径） ──
-  let curlPath = '/usr/bin/curl'
-  const curlReady = (async () => {
-    try {
-      const subprocess = ctx.get('subprocess')
-      if (subprocess !== undefined) curlPath = await subprocess.resolveExecutable('curl')
-    } catch (e) { /* keep default */ }
-  })()
+  // ── 状态文件 I/O（temp + rename 原子替换，0600；写入串行化） ──
+  let writeChain = Promise.resolve()
 
-  // ── 凭据存储（resolve() 返回 { value, source } | undefined，必须取 .value） ──
-  async function loadIndex () {
-    const hit = await ctx.credentials.resolve(INDEX_REF)
-    if (hit === undefined) return []
+  async function loadState () {
+    try {
+      const text = await readFile(STATE_PATH, 'utf8')
+      const v = JSON.parse(text)
+      if (v && typeof v === 'object' && Array.isArray(v.accounts)) return v
+    } catch (e) { /* 不存在或损坏 → 全新状态 */ }
+    return { version: 1, accounts: [] }
+  }
+
+  async function persistState (state) {
+    const run = async () => {
+      await mkdir(dirname(STATE_PATH), { recursive: true })
+      const tmp = STATE_PATH + '.tmp'
+      await writeFile(tmp, JSON.stringify(state), { mode: 0o600 })
+      await rename(tmp, STATE_PATH)
+    }
+    writeChain = writeChain.then(run, run)
+    await writeChain
+  }
+
+  // ── 一次性迁移：旧版把非机密索引存进凭据文件（ZAI_QUOTA_ACCOUNTS）。
+  //    API Key 条目（ZAI_QUOTA_KEY_*）不受影响，留在凭据库。 ──
+  async function migrateLegacyIndex () {
+    try { await readFile(STATE_PATH, 'utf8'); return } catch (e) { /* 状态文件不存在 → 检查迁移源 */ }
+    const hit = await ctx.credentials.resolve(LEGACY_INDEX_REF)
+    if (hit === undefined) return
+    let list = []
     try {
       const v = JSON.parse(String(hit.value))
-      return Array.isArray(v) ? v : []
-    } catch (e) { return [] }
+      if (Array.isArray(v)) list = v
+    } catch (e) { /* 解析失败 → 放弃迁移，从空列表开始 */ }
+    await persistState({ version: 1, accounts: list })
+    try { await ctx.credentials.unset(LEGACY_INDEX_REF) } catch (e) { /* 只读源遮蔽等场景：留着无害 */ }
+    if (list.length > 0) console.log('zquota: migrated', list.length, 'account record(s) from credentials store to', STATE_PATH)
   }
 
-  async function saveIndex (list) {
-    await ctx.credentials.set(INDEX_REF, JSON.stringify(list))
+  const ready = migrateLegacyIndex()
+
+  async function loadIndex () {
+    await ready
+    return (await loadState()).accounts
   }
 
+  async function saveIndex (accounts) {
+    await persistState({ version: 1, accounts })
+  }
+
+  // ── 凭据（机密）读取：resolve() 返回 { value, source } | undefined ──
   async function readKey (keyId) {
     const hit = await ctx.credentials.resolve(keyRef(keyId))
     if (hit === undefined) return ''
@@ -93,6 +132,14 @@ export function apply (ctx) {
   }
 
   // ── 配额查询：key 经环境变量注入，绝不进入命令行参数 ──
+  let curlPath = '/usr/bin/curl'
+  const curlReady = (async () => {
+    try {
+      const subprocess = ctx.get('subprocess')
+      if (subprocess !== undefined) curlPath = await subprocess.resolveExecutable('curl')
+    } catch (e) { /* 保持默认绝对路径 */ }
+  })()
+
   async function refreshOne (a) {
     const keyId = a.keyId || a.id
     const key = await readKey(keyId)

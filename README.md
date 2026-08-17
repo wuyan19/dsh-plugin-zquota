@@ -6,7 +6,7 @@ A Zhipu GLM Coding Plan account panel plugin for DeepSeek Harness: multi-account
 
 - **Quota meters**: per-account 5-hour window / weekly / monthly-MCP cells (orange ≥70%, red ≥90%), reset countdowns precise to hours above one day and to minutes below it, per-tool MCP details on hover
 - **One-click switching**: "Set active" writes the chosen account's API key to `ZAI_CODING_CN_API_KEY`; `llm-pi-ai` re-resolves credentials on every model request, so **the next request uses the new key — no restart**
-- **Data ownership**: accounts and API keys live in your local `$DSH_HOME/.credentials.yaml`; key material never reaches the browser
+- **Data ownership**: API keys (secrets) live in your local `$DSH_HOME/.credentials.yaml` (`ZAI_QUOTA_KEY_<id>`, same store as DSH's own credentials); the account index and quota snapshots (non-secret state) live in the plugin's own state file `$DSH_HOME/zquota-state.json` (0600, atomic writes). Key material never reaches the browser
 - **Query path**: the host half calls `open.bigmodel.cn` / `api.z.ai` via `ctx.shell` + curl, with keys injected through environment variables only (never command lines)
 - **Styling**: built entirely on DSH design tokens (`--dsw-alias-*`); follows light/dark theme automatically
 
@@ -63,7 +63,7 @@ One npm package carries both halves (isomorphic to first-party plugins):
 
 | Half | Entry | Responsibilities |
 |---|---|---|
-| Host | `src/host.js` (`exports "."`, plain ESM, zero build) | credential storage, curl quota queries, JSON API over the `webServer` prefix route `/zquota-api` |
+| Host | `src/host.js` (`exports "."`, plain ESM, zero build) | API-key credential access, curl quota queries, state-file maintenance (`$DSH_HOME/zquota-state.json`), JSON API over the `webServer` prefix route `/zquota-api` |
 | Client | `lib/client.js` (`exports "./client"`, closure-factory bundle) | the `settings.section` page UI, talking to `/zquota-api` via same-origin `fetch` |
 
 The `dsh.client` declaration in `package.json` lets the web shell discover and serve the bundle (`/plugins/dsh-plugin-zquota/client.js`).
@@ -71,9 +71,10 @@ Static packages have no package-private RPC channel like dynamic plugins do; the
 
 ## Security notes
 
-- API keys live in `~/.dsh/.credentials.yaml` (0600) — same store and permission tier as DSH's own credentials
+- The credentials file holds real secrets only: one API key per account (`ZAI_QUOTA_KEY_<id>`, 0600, same permission tier as DSH's own credentials); the non-secret account index and quota snapshots live in the plugin's own state file `$DSH_HOME/zquota-state.json` (0600, atomic temp+rename writes)
 - The browser half never receives key material (the `state` response carries only a `live` flag)
 - `/zquota-api` accepts only loopback requests carrying the `x-zquota-client` header (blocks cross-site simple requests and DNS rebinding)
+- An earlier version stored the account index inside the credentials file (`ZAI_QUOTA_ACCOUNTS`); the new version migrates it into the state file and removes that entry automatically on first load
 
 ## License
 
