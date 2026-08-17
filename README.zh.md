@@ -49,7 +49,7 @@ agent-default-model:
 ### 本地开发
 
 ```sh
-git clone https://github.com/<你>/dsh-plugin-zquota
+git clone https://github.com/wuyan19/dsh-plugin-zquota
 cd dsh-plugin-zquota
 # 用 DSH 源码仓库的 tsdown 构建 client bundle（lib/ 已随仓库提交，通常无需重建）
 /path/to/deepseek-harness/node_modules/.bin/tsdown --config tsdown.config.ts
