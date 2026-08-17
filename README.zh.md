@@ -7,16 +7,16 @@ DeepSeek Harness 的智谱 GLM Coding Plan 账号面板插件：多账号额度�
 - **额度监控**：每账号三格 meter —— 5 小时窗口 / 每周 / MCP 月（≥70% 橙、≥90% 红），重置倒计时大于 1 天精确到小时、小于 1 天精确到分钟，MCP 月悬停可见分工具明细
 - **一键切换**：「设为当前」把所选账号的 API Key 写入 `ZAI_CODING_CN_API_KEY`；`llm-pi-ai` 每次模型请求重新解析凭据，**下一次请求即生效，无需重启**
 - **数据归属**：API Key（机密）存于本机 `$DSH_HOME/.credentials.yaml`（`ZAI_QUOTA_KEY_<id>`，与 DSH 自身凭据同库）；账号索引与额度快照（非机密状态）存于插件自有状态文件 `$DSH_HOME/zquota-state.json`（0600、原子写）。API Key 明文永不进入浏览器
-- **查询通路**：Host 半经 `ctx.shell` 调 curl 直连 `open.bigmodel.cn` / `api.z.ai`，Key 只经环境变量注入，不进命令行参数
+- **查询通路**：Host 半用 Node 原生 fetch 直连 `open.bigmodel.cn` / `api.z.ai`（进程内 HTTPS，不经 shell/沙箱，无外部依赖），Key 仅进入内存中的请求头
 - **样式**：完整使用 DSH 设计令牌（`--dsw-alias-*`），深浅色主题自动跟随
 
 ## 安装
 
-前置：DeepSeek Harness（`dsh` CLI）+ 机器上有 `curl`。
+前置：DeepSeek Harness（`dsh` CLI）。
 
 ```sh
 # 1. 安装包到 web profile（pnpm 原生支持 GitHub 源）
-dsh plugin --profile web add github:<你的用户名>/dsh-plugin-zquota
+dsh plugin --profile web add github:wuyan19/dsh-plugin-zquota
 
 # 2. 挂载：编辑 ~/.dsh/profiles/web/cordis.patch.yml，加入：
 #    - insert:
@@ -63,7 +63,7 @@ dsh plugin --profile web add /path/to/dsh-plugin-zquota
 
 | 半侧 | 入口 | 职责 |
 |---|---|---|
-| Host | `src/host.js`（`exports "."`，纯 ESM 零构建） | API Key 凭据存取、curl 配额查询、状态文件维护（`$DSH_HOME/zquota-state.json`）、`webServer` 前缀路由 `/zquota-api` 提供 JSON API |
+| Host | `src/host.js`（`exports "."`，纯 ESM 零构建） | API Key 凭据存取、Node fetch 配额查询（不经沙箱）、状态文件维护（`$DSH_HOME/zquota-state.json`）、`webServer` 前缀路由 `/zquota-api` 提供 JSON API |
 | Client | `lib/client.js`（`exports "./client"`，闭包工厂 bundle） | `settings.section` 设置页 UI，同源 `fetch` 调用 `/zquota-api` |
 
 `package.json` 的 `dsh.client` 声明让 web 外壳发现并服务该 bundle（`/plugins/dsh-plugin-zquota/client.js`）。
@@ -74,7 +74,6 @@ dsh plugin --profile web add /path/to/dsh-plugin-zquota
 - 凭据文件只放真机密：每个账号的 API Key（`ZAI_QUOTA_KEY_<id>`，0600，与 DSH 自身凭据同库同权限等级）；非机密的账号索引与额度快照在插件自有状态文件 `$DSH_HOME/zquota-state.json`（0600、temp+rename 原子写）
 - 浏览器半永远收不到 Key 明文（`state` 响应只含 `live` 标志）
 - `/zquota-api` 仅接受携带 `x-zquota-client` 头的 loopback 请求（防跨站简单请求与 DNS rebinding）
-- 旧版本曾把账号索引存进凭据文件（`ZAI_QUOTA_ACCOUNTS`）；新版启动时自动迁移到状态文件并清理该条目，无需手工处理
 
 ## License
 

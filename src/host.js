@@ -5,10 +5,10 @@
  * - API Key（机密）存于 $DSH_HOME/.credentials.yaml（经 ctx.credentials，
  *   条目 ZAI_QUOTA_KEY_<id> 每账号一条）——凭据库只放真机密
  * - 账号索引、名称、额度快照（非机密状态）存于插件自有状态文件
- *   $DSH_HOME/zquota-state.json（0600、temp+rename 原子写），
- *   含一次性迁移：旧版曾把索引放进凭据文件（ZAI_QUOTA_ACCOUNTS）
- * - 配额查询经 ctx.shell 调 curl 直连智谱端点；API Key 只经环境变量注入，
- *   绝不进入命令行参数
+ *   $DSH_HOME/zquota-state.json（0600、temp+rename 原子写）
+ * - 配额查询用 Node 原生 fetch 直连智谱端点（进程内 HTTPS，不经
+ *   ctx.shell/沙箱/外部 curl —— 任何平台、任何沙箱后端状态下都可用）；
+ *   API Key 仅进入内存中的 Authorization 头，不落命令行与日志
  * - 「设为当前」= 写 ZAI_CODING_CN_API_KEY，llm-pi-ai 每请求重新解析凭据，
  *   下一次模型请求即生效，无需重启
  * - 浏览器半通过 webServer 前缀路由 /zquota-api 以同源 JSON API 通信
@@ -20,11 +20,10 @@ import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { env } from 'node:process'
 
-export const inject = ['credentials', 'shell', 'webServer']
+export const inject = ['credentials', 'webServer']
 
 const ENDPOINTS = { cn: 'https://open.bigmodel.cn', intl: 'https://api.z.ai' }
 const LIVE_REF = 'ZAI_CODING_CN_API_KEY'
-const LEGACY_INDEX_REF = 'ZAI_QUOTA_ACCOUNTS'
 const API_PREFIX = '/zquota-api'
 const CLIENT_HEADER = 'x-zquota-client'
 const LOOPBACK_HOST = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/i
@@ -71,26 +70,7 @@ export function apply (ctx) {
     await writeChain
   }
 
-  // ── 一次性迁移：旧版把非机密索引存进凭据文件（ZAI_QUOTA_ACCOUNTS）。
-  //    API Key 条目（ZAI_QUOTA_KEY_*）不受影响，留在凭据库。 ──
-  async function migrateLegacyIndex () {
-    try { await readFile(STATE_PATH, 'utf8'); return } catch (e) { /* 状态文件不存在 → 检查迁移源 */ }
-    const hit = await ctx.credentials.resolve(LEGACY_INDEX_REF)
-    if (hit === undefined) return
-    let list = []
-    try {
-      const v = JSON.parse(String(hit.value))
-      if (Array.isArray(v)) list = v
-    } catch (e) { /* 解析失败 → 放弃迁移，从空列表开始 */ }
-    await persistState({ version: 1, accounts: list })
-    try { await ctx.credentials.unset(LEGACY_INDEX_REF) } catch (e) { /* 只读源遮蔽等场景：留着无害 */ }
-    if (list.length > 0) console.log('zquota: migrated', list.length, 'account record(s) from credentials store to', STATE_PATH)
-  }
-
-  const ready = migrateLegacyIndex()
-
   async function loadIndex () {
-    await ready
     return (await loadState()).accounts
   }
 
@@ -131,35 +111,20 @@ export function apply (ctx) {
     return { ok: true, accounts, liveInfo }
   }
 
-  // ── 配额查询：key 经环境变量注入，绝不进入命令行参数 ──
-  let curlPath = '/usr/bin/curl'
-  const curlReady = (async () => {
-    try {
-      const subprocess = ctx.get('subprocess')
-      if (subprocess !== undefined) curlPath = await subprocess.resolveExecutable('curl')
-    } catch (e) { /* 保持默认绝对路径 */ }
-  })()
-
+  // ── 配额查询：Node 原生 fetch 直连（不经 ctx.shell，沙箱后端不可用也不受影响） ──
   async function refreshOne (a) {
     const keyId = a.keyId || a.id
     const key = await readKey(keyId)
     if (key === '') { a.lastError = '未存储 API Key'; return }
     const base = ENDPOINTS[a.endpoint || 'cn']
     try {
-      await curlReady
-      const spec = ctx.shell.resolve({
-        command: curlPath + ' -sS -m 20 -H "Authorization: $ZQ_KEY" "$ZQ_URL/api/monitor/usage/quota/limit"',
-        env: { ZQ_KEY: key, ZQ_URL: base },
-        timeoutMs: 30000,
-        stdoutMaxBytes: 65536,
+      const res = await fetch(base + '/api/monitor/usage/quota/limit', {
+        headers: { authorization: key },
+        signal: AbortSignal.timeout(20000),
       })
-      const res = await ctx.shell.run(spec)
-      if (res.exitCode !== 0) {
-        throw new Error('curl 退出码 ' + res.exitCode + (res.stderr && res.stderr.text ? '：' + res.stderr.text.slice(0, 120) : ''))
-      }
       let json
-      try { json = JSON.parse(res.stdout.text) } catch (e) { throw new Error('响应非 JSON') }
-      if (!json.success) throw new Error(json.msg || json.error || '查询失败')
+      try { json = await res.json() } catch (e) { throw new Error('响应非 JSON（HTTP ' + res.status + '）') }
+      if (!res.ok || !json.success) throw new Error(json.msg || json.error || 'HTTP ' + res.status)
       const limits = (json.data && json.data.limits) || []
       const tokens = limits.filter(l => l.type === 'TOKENS_LIMIT')
       a.lastResult = {
