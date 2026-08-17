@@ -1,0 +1,5 @@
+# 示例：把 dsh-plugin-zquota 挂载进 web profile 的用户 patch 层。
+# 追加到 ~/.dsh/profiles/web/cordis.patch.yml（顶层 YAML 数组的元素）。
+- insert:
+    - id: zquota
+      name: dsh-plugin-zquota
