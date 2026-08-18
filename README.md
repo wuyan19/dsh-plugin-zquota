@@ -12,20 +12,25 @@ A Zhipu GLM Coding Plan account panel plugin for DeepSeek Harness: multi-account
 
 ## Install
 
-Prerequisites: DeepSeek Harness (`dsh` CLI).
+Prerequisites: Node.js (`npx` pulls the dsh CLI automatically; no global install).
 
 ```sh
-# 1. Install into the web profile (pnpm natively supports GitHub specifiers)
-dsh plugin --profile web add github:wuyan19/dsh-plugin-zquota
+# One command installs and auto-mounts (package.json declares dsh.bundle.patch;
+# dsh adds this plugin to the bundles layer on install)
+npx @deepseek-ai/dsh plugin --profile web add github:wuyan19/dsh-plugin-zquota
 
-# 2. Mount: edit ~/.dsh/profiles/web/cordis.patch.yml and add:
-#    - insert:
-#        - id: zquota
-#          name: dsh-plugin-zquota
-#
-#    (or copy install/cordis.patch.example.yml from this repo)
+# Refresh the browser page; if the panel does not appear, restart dsh web
+```
 
-# 3. Refresh the browser page; if the panel does not appear, restart dsh web
+List and uninstall:
+
+```sh
+# List plugins installed in the profile (--depth 0 shows direct dependencies only,
+# i.e. the plugins you installed yourself)
+npx @deepseek-ai/dsh plugin --profile web list --depth 0
+
+# Uninstall (also removes the bundle layer automatically; fully effective after a dsh web restart)
+npx @deepseek-ai/dsh plugin --profile web remove dsh-plugin-zquota
 ```
 
 The panel lives under **Settings → GLM Coding Plan**.
@@ -54,7 +59,7 @@ cd dsh-plugin-zquota
 # Rebuild the client bundle with the DSH source repo's tsdown (lib/ is committed; usually unneeded)
 /path/to/deepseek-harness/node_modules/.bin/tsdown --config tsdown.config.ts
 # Install as a link: into the profile — source edits apply immediately (host half needs no build)
-dsh plugin --profile web add /path/to/dsh-plugin-zquota
+npx @deepseek-ai/dsh plugin --profile web add /path/to/dsh-plugin-zquota
 ```
 
 ## Architecture

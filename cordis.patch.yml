@@ -1,0 +1,9 @@
+# dsh-plugin-zquota bundle layer: mounted automatically because package.json
+# declares dsh.bundle.patch — `npx @deepseek-ai/dsh plugin --profile web add
+# github:wuyan19/dsh-plugin-zquota` composes this insert row into the profile.
+# Later layers (the profile's own cordis.patch.yml, --patch overlays) override
+# these rows by id.
+
+- insert:
+    - id: zquota
+      name: dsh-plugin-zquota

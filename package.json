@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-zquota",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "GLM Coding Plan quota panel for DeepSeek Harness: multi-account usage meters and one-click account switching",
   "type": "module",
   "license": "MIT",
@@ -17,11 +17,15 @@
         "@deepseek-ai/dsh-client-runtime"
       ],
       "platform": "web"
+    },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
     }
   },
   "files": [
     "src",
-    "lib"
+    "lib",
+    "cordis.patch.yml"
   ],
   "scripts": {
     "build": "tsdown"

@@ -12,20 +12,24 @@ DeepSeek Harness 的智谱 GLM Coding Plan 账号面板插件：多账号额度�
 
 ## 安装
 
-前置：DeepSeek Harness（`dsh` CLI）。
+前置：Node.js 环境（`npx` 会自动拉取 dsh，无需全局安装）。
 
 ```sh
-# 1. 安装包到 web profile（pnpm 原生支持 GitHub 源）
-dsh plugin --profile web add github:wuyan19/dsh-plugin-zquota
+# 一条命令安装并自动挂载（package.json 声明 dsh.bundle.patch，
+# 安装后 dsh 自动把本插件加入 bundles 层）
+npx @deepseek-ai/dsh plugin --profile web add github:wuyan19/dsh-plugin-zquota
 
-# 2. 挂载：编辑 ~/.dsh/profiles/web/cordis.patch.yml，加入：
-#    - insert:
-#        - id: zquota
-#          name: dsh-plugin-zquota
-#
-#    （或直接复制本仓库 install/cordis.patch.example.yml 的内容）
+# 刷新浏览器页面；若面板未出现，重启 dsh web
+```
 
-# 3. 刷新浏览器页面；若面板未出现，重启 dsh web
+查询与卸载：
+
+```sh
+# 查询 profile 里已安装的插件（--depth 0 只列直接依赖，即手动安装的插件）
+npx @deepseek-ai/dsh plugin --profile web list --depth 0
+
+# 卸载（自动从 bundles 层一并移除，重启 dsh web 后完全生效）
+npx @deepseek-ai/dsh plugin --profile web remove dsh-plugin-zquota
 ```
 
 面板位置：**设置 → GLM 编程套餐**。
@@ -54,7 +58,7 @@ cd dsh-plugin-zquota
 # 用 DSH 源码仓库的 tsdown 构建 client bundle（lib/ 已随仓库提交，通常无需重建）
 /path/to/deepseek-harness/node_modules/.bin/tsdown --config tsdown.config.ts
 # 以 link 方式装进 profile，改代码即时生效（host 半零构建）
-dsh plugin --profile web add /path/to/dsh-plugin-zquota
+npx @deepseek-ai/dsh plugin --profile web add /path/to/dsh-plugin-zquota
 ```
 
 ## 架构
