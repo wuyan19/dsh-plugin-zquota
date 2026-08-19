@@ -7,9 +7,10 @@
  * 无全局、无 import map）。平台模块列表与仓库 packages/client/web/src/platform.ts
  * 保持一致；新增平台模块时旧 bundle 会改为内联，仍可运行。
  *
- * 在 DSH 源码仓库内构建（复用其 node_modules 中的 tsdown）：
- *   /path/to/deepseek-harness/node_modules/.bin/tsdown --config tsdown.config.ts
- * 或在安装了 tsdown 的环境直接：pnpm run build
+ * 在 DSH 源码仓库内构建已不再必要：tsdown 来自本仓库 devDependencies（公共
+ * npm 源，^0.22.x），externals 只是名字列表（react、@deepseek-ai/cordis 等），
+ * 构建时无需这些包实际存在 —— 它们在运行时由浏览器 loader 的模块表解析：
+ *   npm install && npm run build
  */
 
 const PLATFORM_MODULES = [

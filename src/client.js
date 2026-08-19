@@ -3,7 +3,8 @@
  *
  * 设置面板「GLM 编程套餐」页：账号卡片（5 小时 / 每周 / MCP 月三格 meter、
  * 精确到小时/分钟的重置倒计式）、添加/编辑/删除、单账号与全量刷新、
- * 上移/下移排序、「设为当前」一键切换。数据经同源 /zquota-api JSON API
+ * 上移/下移排序、「设为当前」一键切换（host 侧同时自动补齐模型路由，
+ * 响应携带 provision 结果供本页展示）。数据经同源 /zquota-api JSON API
  * 取自 host 半；API Key 明文永不进入浏览器。
  *
  * i18n：经 ctx.locale 注册 'zquota' 命名空间双语字典；t() 在调用时解析
@@ -30,7 +31,7 @@ const zh = {
   'action.refreshing': '刷新中…',
   'action.add': '添加账号',
   'action.use': '设为当前',
-  'action.use.title': '把该账号的 API Key 写入 ZAI_CODING_CN_API_KEY，下一次请求生效',
+  'action.use.title': '写入该账号的 API Key 并自动补齐模型路由（API Key、glm-5.3、默认模型；端点用 DSH 内置默认），下一次请求生效',
   'action.refresh': '刷新',
   'action.edit': '编辑',
   'action.delete': '删除',
@@ -74,8 +75,17 @@ const zh = {
   'err.activate': '切换失败',
   'err.delete': '删除失败',
   'err.save': '保存失败',
-  'hint.env': '当前凭据来自进程环境变量（ZAI_CODING_CN_API_KEY），在面板内切换不会生效。',
-  'hint.unset': '尚未配置 ZAI_CODING_CN_API_KEY，请选择一个账号点「设为当前」。',
+  'err.provision': '账号已切换，但模型配置写入失败：{msg}',
+  'provision.done': '已自动完成模型配置：{list}。',
+  'provision.sep': '；',
+  'provision.route-created': '新建 {route} 路由（API Key、glm-5.3，上下文 100 万 / 最大输出 128K；端点走 DSH 内置默认）',
+  'provision.route-updated': '{route} 路由凭据引用已改指本面板写点',
+  'provision.model-appended': '{route} 模型列表已追加 glm-5.3',
+  'provision.model-detailed': '已为 glm-5.3 补全尺寸（上下文 1,000,000 / 最大输出 128,000）',
+  'provision.defaults-switched': '默认模型已切换为 {route} / glm-5.3',
+  'provision.defaults-model': '默认模型已对齐为 glm-5.3（当前路由保持不变）',
+  'hint.env': '当前凭据来自进程环境变量，在面板内切换不会生效。',
+  'hint.unset': '尚未配置 GLM 编程凭据，请选择一个账号点「设为当前」。',
 }
 
 /** 英文字典（键集与中文真源一致）。 */
@@ -85,7 +95,7 @@ const en = {
   'action.refreshing': 'Refreshing…',
   'action.add': 'Add account',
   'action.use': 'Set active',
-  'action.use.title': "Write this account's API key to ZAI_CODING_CN_API_KEY; effective on the next request",
+  'action.use.title': 'Write this account\u2019s API key and auto-provision the model route (API key, glm-5.3, default model; endpoint stays on the built-in default); effective on the next request',
   'action.refresh': 'Refresh',
   'action.edit': 'Edit',
   'action.delete': 'Delete',
@@ -129,8 +139,17 @@ const en = {
   'err.activate': 'Switch failed',
   'err.delete': 'Delete failed',
   'err.save': 'Save failed',
-  'hint.env': 'The active credential comes from the process environment (ZAI_CODING_CN_API_KEY); switching here will not take effect.',
-  'hint.unset': 'ZAI_CODING_CN_API_KEY is not configured. Pick an account and click "Set active".',
+  'err.provision': 'Account switched, but writing model settings failed: {msg}',
+  'provision.done': 'Model settings auto-provisioned: {list}.',
+  'provision.sep': '; ',
+  'provision.route-created': 'created the {route} route (API key, glm-5.3; 1M context / 128K max output; endpoint stays on the built-in default)',
+  'provision.route-updated': 're-pointed the {route} credential reference to this panel\u2019s write target',
+  'provision.model-appended': 'appended glm-5.3 to the {route} model list',
+  'provision.model-detailed': 'filled in glm-5.3 sizing (1,000,000 context / 128,000 max output)',
+  'provision.defaults-switched': 'default model switched to {route} / glm-5.3',
+  'provision.defaults-model': 'default model aligned to glm-5.3 (current route kept)',
+  'hint.env': 'The active credential comes from the process environment; switching here will not take effect.',
+  'hint.unset': 'No GLM coding credential is configured yet. Pick an account and click "Set active".',
 }
 
 const CSS = [
@@ -172,6 +191,7 @@ const CSS = [
   '.gq-reset svg{width:11px;height:11px;flex:none;opacity:.75}',
   '.gq-err{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary);word-break:break-word}',
   '.gq-warnline{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-state-warn-label)}',
+  '.gq-infoline{margin:0;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}',
   '.gq-foot{display:flex;align-items:center;gap:8px;min-height:14px}',
   '.gq-ts{font-size:11px;line-height:14px;color:var(--dsw-alias-label-tertiary)}',
   '.gq-empty{border:1px dashed var(--dsw-alias-border-l3);border-radius:10px;padding:28px 16px;display:flex;flex-direction:column;align-items:center;gap:12px;color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:20px}',
@@ -217,6 +237,10 @@ function timeAgo (ms) {
 
 const h = React.createElement
 const LEVELS = { lite: 'Lite', pro: 'Pro', max: 'Max' }
+
+// host activate 响应里 provision.notes 的白名单：未知键静默忽略，
+// 防止旧 host / 新字典之间的键漂移把原始键名漏进界面文案
+const PROVISION_NOTES = ['route-created', 'route-updated', 'model-appended', 'model-detailed', 'defaults-switched', 'defaults-model']
 
 // 内联小时钟图标（平台图标库无 clock 类图标；11px、跟随 currentColor）
 function ClockIcon () {
@@ -282,6 +306,9 @@ function GlmSection (props) {
   const confirm0 = React.useState(null)
   const confirmId = confirm0[0]
   const setConfirmId = confirm0[1]
+  const notes0 = React.useState({ notes: [], route: '' })
+  const provisionNotes = notes0[0]
+  const setProvisionNotes = notes0[1]
   const tick0 = React.useState(0)
   const setTick = tick0[1]
 
@@ -358,6 +385,14 @@ function GlmSection (props) {
     const r = await call('activate', { id: a.id })
     if (!r) return
     if (!r.ok) { setErr(r.error || t('err.activate')); return }
+    // host 在写凭据后顺带补齐模型路由；失败不回滚账号切换，仅提示。
+    // route（zai-coding-cn / zai）随行返回，用于 notes 文案渲染。
+    const p = r.provision
+    if (p && p.error) setErr(t('err.provision', { msg: p.error }))
+    setProvisionNotes({
+      route: (p && typeof p.route === 'string') ? p.route : '',
+      notes: (p && Array.isArray(p.notes)) ? p.notes.filter(n => PROVISION_NOTES.includes(n)) : [],
+    })
     await reload()
   }
 
@@ -482,6 +517,13 @@ function GlmSection (props) {
   } else if (liveInfo && !liveInfo.configured) {
     liveHint = h('p', { className: 'gq-warnline' }, t('hint.unset'))
   }
+  const provisionLine = provisionNotes.notes.length > 0
+    ? h('p', { className: 'gq-infoline' }, t('provision.done', {
+        list: provisionNotes.notes
+          .map(n => t('provision.' + n, { route: provisionNotes.route || 'zai-coding-cn' }))
+          .join(t('provision.sep')),
+      }))
+    : null
 
   return h('div', { className: 'gq-section' },
     h('div', { className: 'gq-head' },
@@ -496,6 +538,7 @@ function GlmSection (props) {
         h('button', { className: 'gq-btn gq-primary', onClick: () => openEditor(null) }, t('action.add')))),
     err ? h('p', { className: 'gq-err' }, err) : null,
     liveHint,
+    provisionLine,
     editor ? renderEditor() : null,
     data === null
       ? h('p', { className: 'gq-ts' }, t('loading'))
